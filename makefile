@@ -8,5 +8,7 @@ lint: ## run tests with poetry (isort, black, pflake8, mypy)
 
 .PHONY: setup-python
 setup-python: ## setup python environment
+	rm ./poetry.lock
 	poetry env use python3.10
-	poetry install
+	poetry install --no-cache --no-interaction
+	cp ./xfoil-python/libxfoil.dylib ./.venv/lib/python3.10/site-packages/xfoil/libxfoil.dylib

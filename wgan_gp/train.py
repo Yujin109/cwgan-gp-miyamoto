@@ -21,16 +21,17 @@ from util import save_coords, save_loss, to_cpu, to_cuda
 from wgan_gp.models import Discriminator, Generator
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=10000, help="number of epochs of training")
-parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
+parser.add_argument("--n_epochs", type=int, default=10000, help="number of epochs of training")  # 10000
+parser.add_argument("--done_epoch", type=int, default=0, help="number of epochs of training already done")  # 0
+parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")  # 64
 parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")  # 1e-4
 parser.add_argument("--b1", type=float, default=0, help="adam: decay of first order momentum of gradient")  # 0.0
 parser.add_argument("--b2", type=float, default=0.9, help="adam: decay of first order momentum of gradient")  # 0.9
-parser.add_argument("--latent_dim", type=int, default=3, help="dimensionality of the latent space")
-parser.add_argument("--n_classes", type=int, default=1, help="number of classes for dataset")
-parser.add_argument("--coord_size", type=int, default=496, help="size of each image dimension")
-parser.add_argument("--channels", type=int, default=1, help="number of image channels")
-parser.add_argument("--n_critic", type=int, default=5, help="number of training steps for discriminator per iter")
+parser.add_argument("--latent_dim", type=int, default=3, help="dimensionality of the latent space")  # 3
+parser.add_argument("--n_classes", type=int, default=1, help="number of classes for dataset")  # 1
+parser.add_argument("--coord_size", type=int, default=496, help="size of each image dimension")  # 496
+parser.add_argument("--channels", type=int, default=1, help="number of image channels")  # 1
+parser.add_argument("--n_critic", type=int, default=5, help="number of training steps for discriminator per iter")  # 5
 # parser.add_argument("--sample_interval", type=int, default=10000, help="interval betwen image samples")
 opt = parser.parse_args()
 # print(opt)
@@ -40,10 +41,9 @@ coord_shape = (opt.channels, opt.coord_size)
 cuda = True if torch.cuda.is_available() else False
 lambda_gp = 10
 # Loss weight for gradient penalty
-done_epoch = 50000
-if done_epoch > 0:
-    G_PATH = "wgan_gp/results/generator_params_{0}".format(done_epoch)
-    D_PATH = "wgan_gp/results/discriminator_params_{0}".format(done_epoch)
+if opt.done_epoch > 0:
+    G_PATH = "wgan_gp/results/generator_params_{0}".format(opt.done_epoch)
+    D_PATH = "wgan_gp/results/discriminator_params_{0}".format(opt.done_epoch)
     generator = Generator(opt.latent_dim)
     generator.load_state_dict(torch.load(G_PATH, map_location=torch.device("cpu")))
     generator.eval()
@@ -130,7 +130,7 @@ start = time.time()
 D_losses, G_losses = [], []
 batches_done = 0
 for epoch in range(opt.n_epochs):
-    epoch += done_epoch
+    epoch += opt.done_epoch
     for i, (coords, labels) in enumerate(dataloader):
         batch_size = coords.shape[0]
         coords = coords.reshape(batch_size, *coord_shape)
@@ -196,7 +196,9 @@ for epoch in range(opt.n_epochs):
             torch.save(generator.state_dict(), "wgan_gp/results/generator_params_{0}".format(epoch))
             torch.save(discriminator.state_dict(), "wgan_gp/results/discriminator_params_{0}".format(epoch))
 
-torch.save(generator.state_dict(), "wgan_gp/results/generator_params_{0}".format(opt.n_epochs + done_epoch))
-torch.save(discriminator.state_dict(), "wgan_gp/results/discriminator_params_{0}".format(opt.n_epochs + done_epoch))
+torch.save(generator.state_dict(), "wgan_gp/results/generator_params_{0}".format(opt.n_epochs + opt.done_epoch))
+torch.save(
+    discriminator.state_dict(), "wgan_gp/results/discriminator_params_{0}".format(opt.n_epochs + opt.done_epoch)
+)
 sample_image(data_num=100)
 save_loss(G_losses, D_losses, path="wgan_gp/results/loss.png")
