@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+from tqdm import tqdm
 
 from calc_cl import get_cl, get_cls
 from util import save_coords_by_cl, to_cpu, to_cuda
@@ -22,7 +23,7 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 class Eval:
     def __init__(self, G_PATH, coords_npz):
-        state_dict = torch.load(G_PATH, map_location=torch.device("cpu"))
+        state_dict = torch.load(G_PATH, map_location=torch.device("cpu"), weights_only=True)
         self.G = Generator(3)
         self.G.load_state_dict(state_dict)
         self.G.eval()
@@ -39,7 +40,7 @@ class Eval:
     def create_coords_by_cl(self, cl_c, data_num=20):
         z = Variable(FloatTensor(np.random.normal(0, 1, (data_num, self.latent_dim))))
         labels = np.array([cl_c] * data_num)
-        labels = Variable(torch.reshape(FloatTensor([labels]), (data_num, 1)))
+        labels = Variable(torch.reshape(FloatTensor(np.array([labels])), (data_num, 1)))
         gen_coords = self.rev_standardize(to_cpu(self.G(z, labels)).detach().numpy())
         return gen_coords
 
@@ -48,10 +49,10 @@ class Eval:
         cl_r = []
         cl_c = []
         gen_coords = []
-        for cl in range(151):
+        for cl in tqdm(range(151)):
             cl /= 100
             cl_c.append(cl)
-            labels = Variable(torch.reshape(FloatTensor([cl]), (1, 1)))
+            labels = Variable(torch.reshape(FloatTensor(np.array([cl])), (1, 1)))
             while True:
                 z = Variable(FloatTensor(np.random.normal(0, 1, (1, self.latent_dim))))
                 gen_coord = self.rev_standardize(to_cpu(self.G(z, labels)).detach().numpy())
@@ -136,24 +137,50 @@ class Eval:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n_epochs", type=int, default=0, help="nuber of epoch trained")  # 0
+    parser.add_argument("--cl_c", type=float, default=0.789, help="specified cl_c")  # 0.789
+    opt = parser.parse_args()
+
+    # データセットの読み込み
     coords_npz = np.load("dataset/standardized_upsampling_coords.npz")
     perfs = np.load("dataset/upsampling_perfs.npy")
-    G_PATH = "wgan_gp/results/generator_params_100000"
+
+    # モデルの読み込み
+    G_PATH = f"wgan_gp/results/generator_params_{opt.n_epochs}"
     evl = Eval(G_PATH, coords_npz)
-    cl_c = 0.789
-    coords = evl.create_coords_by_cl(cl_c)
+
+    ### 指定されたCL_cに関する評価 ###
+
+    # 指定されたCL_cの翼形状を生成
+    coords = evl.create_coords_by_cl(opt.cl_c)
     coords = coords.reshape(coords.shape[0], -1)
-    mu = evl.euclid_dist(coords)
-    print(mu)
-    # clr = get_cls(coords)
-    # max_dist, d_idx, g_idx = evl.calc_dist_from_dataset(coords, clr)
-    # print(max_dist)
-    # d_coord = evl.rev_standardize(evl.coords['data'][d_idx])
-    # d_cl = perfs[d_idx]
-    # g_coord = coords[g_idx]
-    # g_cl = clr[g_idx]
-    # print(cl_c, d_cl, g_cl)
-    # cls = np.array([cl_c, d_cl, g_cl])
-    # np.savez("dist_{0}".format(cl_c), d_coord, g_coord, cls, max_dist)
-    # evl.create_successive_coords()
-    # evl.successive()
+
+    # 生成された翼形状群内の平均距離を計算
+    mu_d = evl.euclid_dist(coords)
+    print(f"mu_d:{mu_d}")
+
+    # 生成された翼形状群のCL_rを計算
+    clr = get_cls(coords)
+    print(f"cl_r:\n{clr}")
+
+    # データセット内の翼形状との距離の最大値を計算
+    max_dist, d_idx, g_idx = evl.calc_dist_from_dataset(coords, clr)
+    print(f"max_dist:{max_dist}")
+
+    # 生成された翼形状群内の最大距離を持つ翼形状とデータセット内の翼形状を保存
+    d_coord = evl.rev_standardize(evl.coords["data"][d_idx])
+    d_cl = perfs[d_idx]
+    g_coord = coords[g_idx]
+    g_cl = clr[g_idx]
+
+    # print(opt.cl_c, d_cl, g_cl)
+    print(f"Input CL_c:{opt.cl_c} → MAX_DISTANCE_PAIR: CL_r of Raw Data:{d_cl}, CL_r of Generated Data:{g_cl}")
+
+    cls = np.array([opt.cl_c, d_cl, g_cl])
+    np.savez("dist_{0}".format(opt.cl_c), d_coord, g_coord, cls, max_dist)
+
+    #########################################
+
+    evl.create_successive_coords()
+    evl.successive()
