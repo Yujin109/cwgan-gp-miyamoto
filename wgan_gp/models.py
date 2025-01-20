@@ -1,15 +1,19 @@
-if '__file__' in globals():
-  import os, sys
-  sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+if "__file__" in globals():
+    import os
+    import sys
 
-import torch.nn as nn
+    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 import torch
+import torch.nn as nn
 
 coord_shape = (1, 496)
+
 
 class Generator(nn.Module):
     def __init__(self, latent_dim):
         super(Generator, self).__init__()
+
         def block(in_feat, out_feat, normalize=True):
             layers = [nn.Linear(in_feat, out_feat)]
             if normalize:
@@ -23,7 +27,7 @@ class Generator(nn.Module):
             *block(128, 256),
             *block(256, 512),
             nn.Linear(512, 496),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
     def forward(self, noise, labels):
@@ -32,6 +36,7 @@ class Generator(nn.Module):
         coords = self.model(gen_input)
         coords = coords.view(coords.shape[0], *coord_shape)
         return coords
+
 
 class Discriminator(nn.Module):
     def __init__(self):

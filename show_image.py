@@ -1,4 +1,5 @@
 import numpy as np
+
 from util import save_coords
 
 yonekura_coord_path = "./old/coord_picked.npy"
@@ -9,18 +10,18 @@ coords = np.load(yonekura_coord_path)
 
 new_coords = []
 cLs = []
-flags = [False]*15
+flags = [False] * 15
 for p, co in zip(perfs, coords):
-  cl = p[1]
-  coord = co.reshape(-1, 2)
-  idx = int(cl*10)
-  if flags[idx]:
-      continue
-  flags[idx] = True
-  cLs.append(cl)
-  new_coords.append(coord)
-  if len(cLs) == 12:
-    break
+    cl = p[1]
+    coord = co.reshape(-1, 2)
+    idx = int(cl * 10)
+    if flags[idx]:
+        continue
+    flags[idx] = True
+    cLs.append(cl)
+    new_coords.append(coord)
+    if len(cLs) == 12:
+        break
 
 cLs = np.array(cLs)
 new_coords = np.array(new_coords)
