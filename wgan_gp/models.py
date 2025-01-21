@@ -1,65 +1,48 @@
-if "__file__" in globals():
-    import os
-    import sys
-
-    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
 import torch
 import torch.nn as nn
 
-coord_shape = (1, 496)
+coord_shape = (1, 496)  # TODO: 汎用性のある形に変更（モデルはflatで不可変だが、データセットの保存時の形式が複数ある）
+
+
+def create_block(in_features, out_features, normalize=True, dropout=False):
+    layers = [nn.Linear(in_features, out_features)]
+    if normalize:
+        layers.append(nn.BatchNorm1d(out_features, 0.8))
+    if dropout:
+        layers.append(nn.Dropout(0.4))
+    layers.append(nn.LeakyReLU(0.2, inplace=True))
+    return layers
 
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim):
+    def __init__(self, latent_dim, output_dim=496):
         super(Generator, self).__init__()
-
-        def block(in_feat, out_feat, normalize=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if normalize:
-                layers.append(nn.BatchNorm1d(out_feat, 0.8))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
         self.model = nn.Sequential(
-            *block(latent_dim + 1, 64, normalize=False),
-            *block(64, 128),
-            *block(128, 256),
-            *block(256, 512),
-            nn.Linear(512, 496),
-            nn.Tanh(),
+            *create_block(latent_dim + 1, 64, normalize=False),
+            *create_block(64, 128),
+            *create_block(128, 256),
+            *create_block(256, 512),
+            nn.Linear(512, output_dim),
+            nn.Tanh()
         )
 
     def forward(self, noise, labels):
-        # Concatenate label embedding and image to produce input
-        gen_input = torch.cat((labels, noise), -1)
+        gen_input = torch.cat((labels, noise), dim=-1)
         coords = self.model(gen_input)
         coords = coords.view(coords.shape[0], *coord_shape)
         return coords
 
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim=496):
         super(Discriminator, self).__init__()
-
-        def block(in_feat, out_feat, dropout=True):
-            layers = [nn.Linear(in_feat, out_feat)]
-            if dropout:
-                layers.append(nn.Dropout(0.4))
-            layers.append(nn.LeakyReLU(0.2, inplace=True))
-            return layers
-
         self.model = nn.Sequential(
-            *block(1 + 496, 512, dropout=False),
-            # *block(512, 512),
-            *block(512, 256, dropout=False),
-            # *block(256, 128),
-            nn.Linear(256, 1),
+            *create_block(input_dim + 1, 512, normalize=False, dropout=False),
+            *create_block(512, 256, normalize=False, dropout=False),
+            nn.Linear(256, 1)
         )
 
     def forward(self, coords, labels):
-        # Concatenate label embedding and image to produce input
-        c_coords = torch.cat((coords.view(coords.size(0), -1), labels), -1)
-        c_coords_flat = c_coords.view(c_coords.shape[0], -1)
-        validity = self.model(c_coords_flat)
-        return validity
+        x = torch.cat((coords.view(coords.size(0), -1), labels), dim=-1)
+        x = x.view(x.shape[0], -1)
+        return self.model(x)

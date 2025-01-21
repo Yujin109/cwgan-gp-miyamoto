@@ -1,0 +1,17 @@
+# wgan-gp train
+poetry run python diffusion/train.py \
+--n_epochs 10 \
+--output_prefix 250121_train_test_001 \
+--lr 0.0005 \
+--num_timesteps 1000 \
+--beta_start 0.0001 \
+--beta_end 0.02
+
+
+
+# wgan-gp eval
+poetry run python wgan_gp/eval.py \
+--model_path ./wgan_gp/archives/generator_params_100000 \
+--coords_path ./dataset/standardized_upsampling_coords.npz \
+--perfs_path ./dataset/standardized_upsampling_perfs.npz \
+--output_prefix 250121_test002_ --samples_per_label 20
