@@ -1,115 +1,75 @@
-if "__file__" in globals():
-    import os
-    import sys
-
-    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
 import argparse
-import statistics
+import os
+import sys
 import time
 
-import matplotlib.pyplot as plt
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 import numpy as np
 import torch
 import torch.autograd as autograd
-import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
-from util import save_coords, save_loss, to_cpu, to_cuda
+from utils import save_coords, save_loss, to_cpu
 from wgan_gp.models import Discriminator, Generator
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=10000, help="number of epochs of training")  # 10000
-parser.add_argument("--done_epoch", type=int, default=0, help="number of epochs of training already done")  # 0
-parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")  # 64
-parser.add_argument("--lr", type=float, default=0.0001, help="adam: learning rate")  # 1e-4
-parser.add_argument("--b1", type=float, default=0, help="adam: decay of first order momentum of gradient")  # 0.0
-parser.add_argument("--b2", type=float, default=0.9, help="adam: decay of first order momentum of gradient")  # 0.9
-parser.add_argument("--latent_dim", type=int, default=3, help="dimensionality of the latent space")  # 3
-parser.add_argument("--n_classes", type=int, default=1, help="number of classes for dataset")  # 1
-parser.add_argument("--coord_size", type=int, default=496, help="size of each image dimension")  # 496
-parser.add_argument("--channels", type=int, default=1, help="number of image channels")  # 1
-parser.add_argument("--n_critic", type=int, default=5, help="number of training steps for discriminator per iter")  # 5
-# parser.add_argument("--sample_interval", type=int, default=10000, help="interval betwen image samples")
-opt = parser.parse_args()
-# print(opt)
-
-coord_shape = (opt.channels, opt.coord_size)
-
-cuda = True if torch.cuda.is_available() else False
-lambda_gp = 10
-# Loss weight for gradient penalty
-if opt.done_epoch > 0:
-    G_PATH = "wgan_gp/results/generator_params_{0}".format(opt.done_epoch)
-    D_PATH = "wgan_gp/results/discriminator_params_{0}".format(opt.done_epoch)
-    generator = Generator(opt.latent_dim)
-    generator.load_state_dict(torch.load(G_PATH, map_location=torch.device("cpu")))
-    generator.eval()
-    discriminator = Discriminator()
-    discriminator.load_state_dict(torch.load(D_PATH, map_location=torch.device("cpu")))
-    discriminator.eval()
-else:
-    generator = Generator(opt.latent_dim)
-    discriminator = Discriminator()
-
-if cuda:
-    print("use GPU")
-    generator.cuda()
-    discriminator.cuda()
-
-# Configure data loader
-perfs_npz = np.load("dataset/standardized_upsampling_perfs.npz")
-coords_npz = np.load("dataset/standardized_upsampling_coords.npz")
-coords = coords_npz[coords_npz.files[0]]
-coord_mean = coords_npz[coords_npz.files[1]]
-coord_std = coords_npz[coords_npz.files[2]]
-perfs = perfs_npz[perfs_npz.files[0]]
-perf_mean = perfs_npz[perfs_npz.files[1]]
-perf_std = perfs_npz[perfs_npz.files[2]]
-
-max_cl = 1.58
-
-dataset = torch.utils.data.TensorDataset(torch.tensor(coords), torch.tensor(perfs))
-dataloader = torch.utils.data.DataLoader(
-    dataset,
-    batch_size=opt.batch_size,
-    shuffle=True,
-)
-
-# Optimizers
-optimizer_G = torch.optim.Adam(generator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-
+cuda = torch.cuda.is_available()
 FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 
-def sample_image(epoch=None, data_num=12):
-    # Sample noise
-    z = Variable(FloatTensor(np.random.normal(0, 1, (data_num, opt.latent_dim))))
-    labels = max_cl * np.random.random_sample(size=(data_num, opt.n_classes))
-    labels = Variable(FloatTensor(labels))
-    gen_coords = to_cpu(generator(z, labels)).detach().numpy()
-    labels = to_cpu(labels).detach().numpy()
-    if epoch is not None:
-        save_coords(
-            gen_coords * coord_std + coord_mean, labels, "wgan_gp/coords/epoch_{0}".format(str(epoch).zfill(3))
-        )
-    else:
-        np.savez("wgan_gp/results/final", labels, gen_coords * coord_std + coord_mean)
-        save_coords(gen_coords * coord_std + coord_mean, labels, "wgan_gp/coords/final.png")
+# Function to parse arguments
+def parse_args():
+    parser = argparse.ArgumentParser()
+    # 学習設定
+    parser.add_argument("--n_epochs", type=int, default=10000, help="Number of training epochs")
+    parser.add_argument("--done_epoch", type=int, default=0, help="Number of epochs already completed")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--output_prefix", type=str, default="", help="Prefix for output files")
+    # データセット設定
+    parser.add_argument("--coords_path", type=str, default="dataset/standardized_coords.npz", help="Path to dataset")
+    parser.add_argument("--perfs_path", type=str, default="dataset/standardized_perfs.npz", help="Path to dataset")
+    parser.add_argument("--max_cl", type=float, default=1.58, help="Maximum CL value")
+    parser.add_argument("--coord_size", type=int, default=496, help="Size of each coordinate")
+    parser.add_argument("--n_classes", type=int, default=1, help="Number of classes in the dataset")
+    # 最適化設定
+    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
+    parser.add_argument("--b1", type=float, default=0, help="Adam beta1")
+    parser.add_argument("--b2", type=float, default=0.9, help="Adam beta2")
+    # モデル設定
+    parser.add_argument("--latent_dim", type=int, default=3, help="Latent space dimensionality")
+    parser.add_argument("--channels", type=int, default=1, help="Number of channels")
+    parser.add_argument("--n_critic", type=int, default=5, help="Discriminator steps per generator step")
+    parser.add_argument("--lambda_gp", type=float, default=10.0, help="Gradient penalty weight")
+
+    return parser.parse_args()
 
 
-def compute_gradient_penalty(D, real_samples, fake_samples, labels):
-    """Calculates the gradient penalty loss for WGAN GP"""
-    # Random weight term for interpolation between real and fake samples
+# Function to configure dataset
+def load_dataset(coords_path, perfs_path):
+    coords_npz = np.load(coords_path)
+    coords = coords_npz["coords"]
+    coord_mean = coords_npz["mean"]
+    coord_std = coords_npz["std"]
+
+    perfs_npz = np.load(perfs_path)
+    perfs = perfs_npz["perfs"]
+    perf_mean = perfs_npz["mean"]
+    perf_std = perfs_npz["std"]
+
+    dataset = TensorDataset(torch.tensor(coords), torch.tensor(perfs))
+    coord_stats = {"mean": coord_mean, "std": coord_std}
+    perf_stats = {"mean": perf_mean, "std": perf_std}
+
+    return dataset, coord_stats, perf_stats
+
+
+# Function to compute gradient penalty
+def compute_gradient_penalty(discriminator, real_samples, fake_samples, labels):
     alpha = FloatTensor(np.random.random((real_samples.size(0), 1, 1)))
-    # Get random interpolation between real and fake samples
-    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
-    d_interpolates = D(interpolates, labels)
+    interpolates = (alpha * real_samples + (1 - alpha) * fake_samples).requires_grad_(True)
+    d_interpolates = discriminator(interpolates, labels)
     fake = Variable(FloatTensor(real_samples.shape[0], 1).fill_(1.0), requires_grad=False)
-    # Get gradient w.r.t. interpolates
     gradients = autograd.grad(
         outputs=d_interpolates,
         inputs=interpolates,
@@ -119,86 +79,101 @@ def compute_gradient_penalty(D, real_samples, fake_samples, labels):
         only_inputs=True,
     )[0]
     gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
+    return ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 
 
-# ----------
-#  Training
-# ----------
-start = time.time()
-D_losses, G_losses = [], []
-batches_done = 0
-for epoch in range(opt.n_epochs):
-    epoch += opt.done_epoch
-    for i, (coords, labels) in enumerate(dataloader):
-        batch_size = coords.shape[0]
-        coords = coords.reshape(batch_size, *coord_shape)
+# Function to generate and save samples
+def generate_and_save_samples(generator, coord_stats, prefix, epoch=None, num_samples=15):
+    z = Variable(FloatTensor(np.random.normal(0, 1, (num_samples, opt.latent_dim))))
+    labels = Variable(FloatTensor(opt.max_cl * np.random.random_sample(size=(num_samples, opt.n_classes))))
+    gen_coords = to_cpu(generator(z, labels)).detach().numpy()
+    gen_coords = gen_coords * coord_stats["std"] + coord_stats["mean"]
 
-        valid = Variable(FloatTensor(batch_size, 1).fill_(1.0), requires_grad=False)
-        fake = Variable(FloatTensor(batch_size, 1).fill_(0.0), requires_grad=False)
+    if epoch is not None:
+        save_coords(gen_coords, labels, f"wgan_gp/results/{prefix}samples_epoch_{str(epoch).zfill(3)}.png")
+    else:
+        np.savez(f"wgan_gp/results/{prefix}final_samples", labels=labels, coords=gen_coords)
+        save_coords(gen_coords, labels, f"wgan_gp/results/{prefix}final_samples.png")
 
-        # Configure input
-        real_imgs = Variable(coords.type(FloatTensor))
-        labels = to_cuda(Variable(torch.reshape(labels.float(), (batch_size, opt.n_classes))))
-        # ---------------------
-        #  Train Discriminator
-        # ---------------------
-        optimizer_D.zero_grad()
 
-        # Sample noise and labels as generator input
-        z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
+# Main training function
+def train_model(opt):
 
-        # Generate a batch of images
-        gen_imgs = generator(z, labels)
+    dataset, coord_stats, perfs_stats = load_dataset(opt.coords_path, opt.perfs_path)
+    dataloader = DataLoader(dataset, batch_size=opt.batch_size, shuffle=True)
 
-        # Loss for real images
-        validity_real = discriminator(real_imgs, labels)
-        # Loss for fake images
-        validity_fake = discriminator(gen_imgs, labels)
+    generator = Generator(opt.latent_dim)
+    discriminator = Discriminator()
 
-        # Gradient penalty
-        gradient_penalty = compute_gradient_penalty(discriminator, real_imgs.data, gen_imgs.data, labels)
-        # Total discriminator loss
-        d_loss = -torch.mean(validity_real) + torch.mean(validity_fake) + lambda_gp * gradient_penalty
+    if opt.done_epoch > 0:
+        generator.load_state_dict(
+            torch.load(f"wgan_gp/results/{opt.output_prefix}generator_params_{opt.done_epoch}.pth", weights_only=True)
+        )
+        discriminator.load_state_dict(
+            torch.load(
+                f"wgan_gp/results/{opt.output_prefix}discriminator_params_{opt.done_epoch}.pth", weights_only=True
+            )
+        )
 
-        d_loss.backward()
-        optimizer_D.step()
+    if cuda:
+        generator.cuda()
+        discriminator.cuda()
 
-        optimizer_G.zero_grad()
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 
-        # Train the generator every n_critic iterations
-        if i % opt.n_critic == 0:
-            # -----------------
-            #  Train Generator
-            # -----------------
+    D_losses, G_losses = [], []
+    start_time = time.time()
 
-            # Generate a batch of images
-            gen_labels = Variable(FloatTensor(max_cl * np.random.random_sample(size=(batch_size, opt.n_classes))))
-            gen_imgs = generator(z, gen_labels)
-            # Loss measures generator's ability to fool the discriminator
-            validity = discriminator(gen_imgs, gen_labels)
-            g_loss = -torch.mean(validity)
-            g_loss.backward()
-            optimizer_G.step()
+    for epoch in range(opt.n_epochs):
+        epoch += opt.done_epoch
+        for i, (coords, labels) in enumerate(dataloader):
+            batch_size = coords.size(0)
+            coords = coords.view(batch_size, 1, opt.coord_size).type(FloatTensor)
+            labels = labels.view(batch_size, opt.n_classes).type(FloatTensor)
+
+            optimizer_D.zero_grad()
+
+            z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
+            fake_coords = generator(z, labels)
+
+            validity_real = discriminator(coords, labels)
+            validity_fake = discriminator(fake_coords, labels)
+
+            gradient_penalty = compute_gradient_penalty(discriminator, coords, fake_coords, labels)
+            d_loss = -torch.mean(validity_real) + torch.mean(validity_fake) + opt.lambda_gp * gradient_penalty
+            d_loss.backward()
+            optimizer_D.step()
+
+            if i % opt.n_critic == 0:
+                optimizer_G.zero_grad()
+                z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
+                gen_coords = generator(z, labels)
+                validity = discriminator(gen_coords, labels)
+                g_loss = -torch.mean(validity)
+                g_loss.backward()
+                optimizer_G.step()
 
             if i == 0:
+                elapsed_time = time.time() - start_time
                 print(
-                    "[Epoch %d/%d %ds] [D loss: %f] [G loss: %f]"
-                    % (epoch + 1, opt.n_epochs, int(time.time() - start), d_loss.item(), g_loss.item())
+                    f"[Epoch {epoch}/{opt.n_epochs}] [D loss: {d_loss.item():.4f}] [G loss: {g_loss.item():.4f}] [Time: {elapsed_time:.2f}s]"
                 )
-
                 D_losses.append(d_loss.item())
                 G_losses.append(g_loss.item())
 
-            batches_done += opt.n_critic
-        if epoch % 5000 == 0:
-            torch.save(generator.state_dict(), "wgan_gp/results/generator_params_{0}".format(epoch))
-            torch.save(discriminator.state_dict(), "wgan_gp/results/discriminator_params_{0}".format(epoch))
+        if epoch % 500 == 0 or epoch == opt.n_epochs - 1:
+            torch.save(generator.state_dict(), f"wgan_gp/results/{opt.output_prefix}generator_params_{epoch}.pth")
+            torch.save(
+                discriminator.state_dict(), f"wgan_gp/results/{opt.output_prefix}discriminator_params_{epoch}.pth"
+            )
+            generate_and_save_samples(generator, coord_stats, opt.output_prefix, epoch=epoch)
 
-torch.save(generator.state_dict(), "wgan_gp/results/generator_params_{0}".format(opt.n_epochs + opt.done_epoch))
-torch.save(
-    discriminator.state_dict(), "wgan_gp/results/discriminator_params_{0}".format(opt.n_epochs + opt.done_epoch)
-)
-sample_image(data_num=100)
-save_loss(G_losses, D_losses, path="wgan_gp/results/loss.png")
+    torch.save(generator.state_dict(), f"wgan_gp/results/{opt.output_prefix}generator_params_final.pth")
+    torch.save(discriminator.state_dict(), f"wgan_gp/results/{opt.output_prefix}discriminator_params_final.pth")
+    save_loss(G_losses, D_losses, path=f"wgan_gp/results/{opt.output_prefix}loss.png")
+
+
+if __name__ == "__main__":
+    opt = parse_args()
+    train_model(opt)

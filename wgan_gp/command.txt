@@ -1,0 +1,11 @@
+# wgan-gp train
+poetry run python wgan_gp/train.py \
+--n_epochs 500 \
+--output_prefix 250121_test001_                 
+
+# wgan-gp eval
+poetry run python wgan_gp/eval.py \
+--model_path ./wgan_gp/archives/generator_params_100000 \
+--coords_path ./dataset/standardized_upsampling_coords.npz \
+--perfs_path ./dataset/standardized_upsampling_perfs.npz \
+--output_prefix 250121_test002_ --samples_per_label 20
